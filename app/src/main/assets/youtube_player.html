@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="preconnect" href="https://www.youtube.com">
+<link rel="preconnect" href="https://i.ytimg.com">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+  }
+  #player {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+  }
+  #player iframe {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #000;
+  }
+</style>
+</head>
+<body>
+<div id="player"></div>
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+  var player = null;
+  var apiReady = false;
+  var currentVideoId = '';
+  var queueIds = [];
+  var currentIndex = 0;
+  var currentTimeSeconds = 0;
+  var currentDurationSeconds = 0;
+  var currentState = -1;
+  var autoNextTriggered = false;
+  var progressTimer = null;
+  var shuffleEnabled = false;
+  var repeatMode = 'off';
+  var pendingRequest = null;
+  var nextPreviewImage = null;
+
+  function notifyReady() {
+    if (window.Android && Android.onPlayerReady) {
+      Android.onPlayerReady();
+    }
+  }
+
+  function notifyError(code) {
+    if (window.Android && Android.onPlayerError) {
+      Android.onPlayerError(code);
+    }
+  }
+
+  function notifyEnded() {
+    if (window.Android && Android.onQueueEnded) {
+      Android.onQueueEnded();
+    }
+  }
+
+  function resetPlaybackFlags() {
+    currentTimeSeconds = 0;
+    currentDurationSeconds = 0;
+    currentState = -1;
+    autoNextTriggered = false;
+  }
+
+  function notifyVideoChanged(videoId, index) {
+    if (window.Android && Android.onVideoChanged) {
+      Android.onVideoChanged(videoId, index);
+    }
+  }
+
+  function notifyProgress() {
+    if (window.Android && Android.onPlaybackProgress) {
+      Android.onPlaybackProgress(currentVideoId, currentTimeSeconds, currentDurationSeconds);
+    }
+  }
+
+  function isValidTimeValue(value) {
+    return typeof value === 'number' && isFinite(value) && value >= 0;
+  }
+
+  function normalizeIndex(index) {
+    if (!queueIds.length) return -1;
+    if (index < 0) return 0;
+    if (index >= queueIds.length) return queueIds.length - 1;
+    return index;
+  }
+
+  function resolveNextIndex() {
+    if (!queueIds.length) return -1;
+    if (repeatMode === 'one') return currentIndex;
+
+    if (shuffleEnabled && queueIds.length > 1) {
+      var next = currentIndex;
+      var attempts = 0;
+      while (next === currentIndex && attempts < 12) {
+        next = Math.floor(Math.random() * queueIds.length);
+        attempts++;
+      }
+      if (next !== currentIndex) return next;
+    }
+
+    var candidate = currentIndex + 1;
+    if (candidate < queueIds.length) return candidate;
+    if (repeatMode === 'all') return 0;
+    return -1;
+  }
+
+  function preloadNextVideo() {
+    var nextIndex = resolveNextIndex();
+    if (nextIndex < 0 || nextIndex >= queueIds.length) return;
+    nextPreviewImage = new Image();
+    nextPreviewImage.src = 'https://i.ytimg.com/vi/' + queueIds[nextIndex] + '/hqdefault.jpg';
+  }
+
+  function applyPendingRequest() {
+    if (!player || !pendingRequest) return;
+
+    var request = pendingRequest;
+    pendingRequest = null;
+    currentVideoId = request.videoId;
+    currentIndex = request.index;
+    resetPlaybackFlags();
+    currentTimeSeconds = request.startSeconds || 0;
+
+    if (request.autoplay) {
+      player.loadVideoById({
+        videoId: request.videoId,
+        startSeconds: request.startSeconds || 0
+      });
+    } else {
+      player.cueVideoById({
+        videoId: request.videoId,
+        startSeconds: request.startSeconds || 0
+      });
+    }
+
+    notifyVideoChanged(request.videoId, request.index);
+    preloadNextVideo();
+  }
+
+  function setQueue(videoIds, startIndex) {
+    queueIds = Array.isArray(videoIds) ? videoIds.slice() : [];
+    currentIndex = normalizeIndex(typeof startIndex === 'number' ? startIndex : 0);
+  }
+
+  function setPlaybackOptions(shuffle, repeat) {
+    shuffleEnabled = !!shuffle;
+    repeatMode = repeat || 'off';
+    preloadNextVideo();
+  }
+
+  function playAtIndex(index, startSeconds, autoplay) {
+    if (!queueIds.length) {
+      notifyError(-2);
+      return;
+    }
+
+    var normalized = normalizeIndex(index);
+    if (normalized < 0) return;
+
+    var videoId = queueIds[normalized];
+    if (!videoId) return;
+
+    pendingRequest = {
+      index: normalized,
+      videoId: videoId,
+      startSeconds: startSeconds || 0,
+      autoplay: autoplay !== false
+    };
+
+    if (player) {
+      applyPendingRequest();
+    }
+  }
+
+  function loadVideo(videoId, startSeconds) {
+    if (!videoId) return;
+    var index = queueIds.indexOf(videoId);
+    if (index === -1) {
+      queueIds = [videoId];
+      index = 0;
+    }
+    playAtIndex(index, startSeconds || 0, true);
+  }
+
+  function playNext() {
+    if (autoNextTriggered) return;
+    autoNextTriggered = true;
+
+    var nextIndex = resolveNextIndex();
+    if (nextIndex === -1) {
+      holdAtVideoTail();
+      notifyEnded();
+      return;
+    }
+    playAtIndex(nextIndex, 0, true);
+  }
+
+  function holdAtVideoTail() {
+    if (!player || !player.pauseVideo) return;
+    var safeDuration = player.getDuration ? (player.getDuration() || currentDurationSeconds) : currentDurationSeconds;
+    if (isValidTimeValue(safeDuration) && safeDuration > 0 && player.seekTo) {
+      player.seekTo(Math.max(0, safeDuration - 0.15), true);
+    }
+    player.pauseVideo();
+  }
+
+  function playPrevious() {
+    if (!queueIds.length) return;
+    if (player && player.getCurrentTime && player.getCurrentTime() > 3) {
+      player.seekTo(0, true);
+      return;
+    }
+
+    if (repeatMode === 'one') {
+      playAtIndex(currentIndex, 0, true);
+      return;
+    }
+
+    var prevIndex = currentIndex - 1;
+    if (prevIndex < 0) {
+      if (repeatMode === 'all') {
+        prevIndex = queueIds.length - 1;
+      } else {
+        return;
+      }
+    }
+
+    playAtIndex(prevIndex, 0, true);
+  }
+
+  function pauseVideo() {
+    if (player) player.pauseVideo();
+  }
+
+  function resumeVideo() {
+    if (player) {
+      player.playVideo();
+    } else if (pendingRequest) {
+      pendingRequest.autoplay = true;
+    }
+  }
+
+  function seekBy(seconds) {
+    if (!player || !player.seekTo) return;
+    var nextTime = Math.max(0, currentTimeSeconds + seconds);
+    player.seekTo(nextTime, true);
+  }
+
+  function getCurrentTime() { return currentTimeSeconds; }
+  function getDuration() { return currentDurationSeconds; }
+
+  function seekTo(seconds) {
+    if (!player || !player.seekTo) return;
+    player.seekTo(Math.max(0, seconds), true);
+  }
+
+  function setVolume(vol) {
+    if (player && player.setVolume) player.setVolume(vol);
+  }
+
+  function startProgressLoop() {
+    if (progressTimer) {
+      clearInterval(progressTimer);
+    }
+
+    progressTimer = setInterval(function() {
+      if (!player || !player.getCurrentTime) return;
+
+      currentTimeSeconds = player.getCurrentTime() || 0;
+      currentDurationSeconds = player.getDuration() || 0;
+      currentState = player.getPlayerState ? player.getPlayerState() : currentState;
+      notifyProgress();
+
+      if (!autoNextTriggered &&
+          currentState === YT.PlayerState.PLAYING &&
+          isValidTimeValue(currentDurationSeconds) &&
+          isValidTimeValue(currentTimeSeconds) &&
+          currentDurationSeconds > 0) {
+        var remainingTime = currentDurationSeconds - currentTimeSeconds;
+        if (remainingTime >= 0 && remainingTime <= 0.5) {
+          playNext();
+        }
+      }
+    }, 250);
+  }
+
+  function handleStateChange(state) {
+    currentState = state;
+    if (window.Android && Android.onPlayerStateChange) {
+      Android.onPlayerStateChange(currentState);
+    }
+
+    if (state === YT.PlayerState.PLAYING) {
+      autoNextTriggered = false;
+      preloadNextVideo();
+    }
+
+    // Fallback only: main path should switch before ENDED.
+    if (state === YT.PlayerState.ENDED && !autoNextTriggered) {
+      if (isValidTimeValue(currentDurationSeconds) && currentDurationSeconds > 0) {
+        playNext();
+      }
+    }
+  }
+
+  function ensurePlayer() {
+    if (!apiReady || player) return;
+
+    player = new YT.Player('player', {
+      width: '100%',
+      height: '100%',
+      playerVars: {
+        autoplay: 0,
+        controls: 1,
+        playsinline: 1,
+        rel: 0,
+        modestbranding: 1,
+        iv_load_policy: 3,
+        fs: 0,
+        enablejsapi: 1,
+        origin: 'https://appassets.androidplatform.net'
+      },
+      events: {
+        onReady: function() {
+          notifyReady();
+          startProgressLoop();
+          applyPendingRequest();
+        },
+        onStateChange: function(event) {
+          handleStateChange(event.data);
+        },
+        onError: function(event) {
+          notifyError(event.data);
+        }
+      }
+    });
+  }
+
+  function onYouTubeIframeAPIReady() {
+    apiReady = true;
+    ensurePlayer();
+    if (pendingRequest) {
+      applyPendingRequest();
+    }
+  }
+
+  window.onerror = function() {
+    notifyError(-2);
+  };
+</script>
+</body>
+</html>

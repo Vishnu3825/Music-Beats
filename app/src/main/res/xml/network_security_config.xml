@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow Jamendo API (HTTPS only) -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">api.jamendo.com</domain>
+        <domain includeSubdomains="true">usercontent.jamendo.com</domain>
+    </domain-config>
+    <!-- Fallback: block all cleartext except localhost for debug -->
+    <base-config cleartextTrafficPermitted="false" />
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

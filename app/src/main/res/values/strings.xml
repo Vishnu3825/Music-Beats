@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Music Beats</string>
+    <string name="permission_audio_rationale">This app needs access to your audio files to play local music.</string>
+    <string name="no_songs_found">No songs found</string>
+    <string name="add_songs_to_device">Add audio files to your device storage to see them here.</string>
+    <string name="notification_channel_playback">Music Playback</string>
+    <string name="notification_channel_playback_desc">Shows currently playing music and controls</string>
+    <string name="notification_playing_background">Playing in background</string>
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+    <string name="next">Next</string>
+    <string name="previous">Previous</string>
+</resources>
